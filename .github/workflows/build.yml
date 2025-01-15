@@ -1,0 +1,67 @@
+name: Docker Multi-Image CI
+
+on:
+  push:
+    branches:
+      - main  # Déclencher l'action lors d'un push sur la branche principale
+    tags:
+      - 'v*'  # Déclencher aussi l'action lors d'un tag avec le format "v1.x"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        # Liste des répertoires contenant des Dockerfiles
+        directories:
+          - ansible
+          - kubectl 
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_TOKEN }}
+
+      - name: Extract version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        id: extract_version
+        run: echo "::set-output name=version::${GITHUB_REF#refs/tags/}"
+
+      - name: Build and tag Docker image for each service
+        run: |
+          REPO_NAME=$(basename ${{ github.repository }})
+          IMAGE_NAME="${REPO_NAME}/${{ matrix.directories }}"
+          
+          TAG="${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="latest"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ steps.extract_version.outputs.version }}"
+          fi
+          
+          # Build Docker image for each service directory
+          docker build -t ghcr.io/${{ github.repository }}/${{ matrix.directories }}:$TAG ./${{ matrix.directories }}
+          docker tag ghcr.io/${{ github.repository }}/${{ matrix.directories }}:$TAG ghcr.io/${{ github.repository }}/${{ matrix.directories }}:latest
+
+      - name: Push Docker image to GitHub Container Registry
+        run: |
+          TAG="${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="latest"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ steps.extract_version.outputs.version }}"
+          fi
+
+          # Push Docker image for each service directory
+          docker push ghcr.io/${{ github.repository }}/${{ matrix.directories }}:$TAG
+          docker push ghcr.io/${{ github.repository }}/${{ matrix.directories }}:latest
